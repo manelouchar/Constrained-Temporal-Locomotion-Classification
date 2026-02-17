@@ -1,0 +1,95 @@
+seed: 42
+device: 'cpu'
+
+# Données
+data:
+  sampling_rate: 100  # Hz
+  lowpass_cutoff: 25  # Hz
+  n_subjects: 10
+  classes: ['LW', 'SA', 'SD', 'RA', 'RD']
+  label_mapping:
+    10: 'LW'
+    20: 'RA'
+    30: 'RD'
+    40: 'SA'
+    50: 'SD'
+    12: 'LW→RA'
+    13: 'LW→RD'
+    14: 'LW→SA'
+    15: 'LW→SD'
+    21: 'RA→LW'
+    31: 'RD→LW'
+    41: 'SA→LW'
+    51: 'SD→LW'
+  n_classes: 5
+  
+  # Fenêtrage
+  window_size: 2.0  # secondes (1.5-2.5)
+  overlap: 0.5      # 50%
+  step_size: null   # auto
+
+# Prétraitement
+preprocessing:
+  normalization: 'zscore' 
+  balance_classes: true
+  
+# LSTM
+lstm:
+  architecture: 'LSTM'  # GRU
+  n_layers: 2
+  hidden_size: 128
+  dropout: 0.2
+  bidirectional: false
+  
+# CNN-LSTM
+cnn_lstm:
+  conv_channels: [64, 128]
+  kernel_sizes: [5, 5]
+  pooling: 'max'
+  lstm_layers: 1
+  lstm_hidden: 128
+  dropout: 0.3
+
+# Entraînement
+training:
+  batch_size: 64
+  epochs: 50
+  learning_rate: 0.001
+  optimizer: 'Adam'
+  loss: 'CrossEntropy'
+  class_weights: true
+  early_stopping: 10
+  
+# Post-filtrage
+postprocessing:
+  method: 'viterbi'  # 'hsmm'
+  
+  # Durées minimales (secondes) a partir de EDA 
+  dmin:
+    LW: 0.8
+    SA: 0.6
+    SD: 0.6
+    RA: 0.5
+    RD: 0.5
+  
+  # Coûts de transition
+  transition_costs:
+    illegal: -inf  # SA->RA, SD->RD, etc.
+    legal: 0.0
+    
+  # Temps réel
+  realtime:
+    window_causal: 1.5  # W (secondes)
+    update_step: 0.25   # S (secondes)
+
+# Évaluation
+evaluation:
+  metrics: ['accuracy', 'f1_macro', 'precision', 'recall', 'fc_min', 'latency']
+  loso: true
+
+paths:
+  data_dir: "./data/combined"
+  processed_dir: "./data/processed"
+  loso_dir: "./data/loso_splits"
+  models_dir: "./models"
+  logs_dir: "./logs"
