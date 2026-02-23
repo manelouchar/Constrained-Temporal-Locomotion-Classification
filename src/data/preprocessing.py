@@ -2,56 +2,37 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from scipy.signal import butter, filtfilt
 
-
 class IMUPreprocessor:
-    """
-    IMU preprocessing:
-    - Optional low-pass filtering (Butterworth)
-    - Z-score normalization per subject (fit on TRAIN only)
-    """
-
-    def __init__(
-        self,
-        method: str = "zscore",
-        use_lowpass: bool = True,
-        cutoff_hz: float = 25.0,
-        sampling_rate: int = 100,
-        filter_order: int = 4
-    ):
-        self.method = method
-        self.use_lowpass = use_lowpass
-        self.cutoff_hz = cutoff_hz
+    """IMU preprocessing: optional low-pass filtering + Z-score normalization"""
+    
+    def __init__(self, method='zscore', use_lowpass=False,
+                 cutoff_hz=25.0, sampling_rate=100, filter_order=4):
+        from scipy.signal import butter, filtfilt
+        
+        self.method        = method
+        self.use_lowpass   = use_lowpass
+        self.cutoff_hz     = cutoff_hz
         self.sampling_rate = sampling_rate
-        self.filter_order = filter_order
+        self.filter_order  = filter_order
+        self.scalers       = {}
+        self.butter        = butter
+        self.filtfilt      = filtfilt
 
-        self.scalers = {}  # one scaler per subject
-
-    # ---------------------------------------------------
-    # Low-pass filter
-    # ---------------------------------------------------
-    def _apply_lowpass(self, X: np.ndarray) -> np.ndarray:
+    def _apply_lowpass(self, X):
         if not self.use_lowpass:
             return X
-
+        from sklearn.preprocessing import StandardScaler
         nyquist = self.sampling_rate / 2.0
         normal_cutoff = self.cutoff_hz / nyquist
-        b, a = butter(self.filter_order, normal_cutoff, btype="low")
-
+        b, a = self.butter(self.filter_order, normal_cutoff, btype="low")
         X_filt = np.zeros_like(X)
         for i in range(X.shape[1]):
-            X_filt[:, i] = filtfilt(b, a, X[:, i])
-
+            X_filt[:, i] = self.filtfilt(b, a, X[:, i])
         return X_filt
 
-    # ---------------------------------------------------
-    # Fit scaler on TRAIN data only
-    # ---------------------------------------------------
-    def fit(self, X: np.ndarray, subject_id: str):
-        """
-        Fit normalization parameters for one subject (TRAIN only)
-        """
+    def fit(self, X, subject_id):
+        from sklearn.preprocessing import StandardScaler
         X = self._apply_lowpass(X)
-
         if self.method == "zscore":
             scaler = StandardScaler()
             scaler.fit(X)
@@ -59,22 +40,12 @@ class IMUPreprocessor:
         else:
             raise ValueError(f"Unknown normalization method: {self.method}")
 
-    # ---------------------------------------------------
-    # Transform using fitted scaler
-    # ---------------------------------------------------
-    def transform(self, X: np.ndarray, subject_id: str) -> np.ndarray:
-        """
-        Apply filtering + normalization
-        """
+    def transform(self, X, subject_id):
         if subject_id not in self.scalers:
             raise ValueError(f"Scaler not fitted for subject {subject_id}")
-
         X = self._apply_lowpass(X)
         return self.scalers[subject_id].transform(X)
 
-    # ---------------------------------------------------
-    # Fit + transform shortcut
-    # ---------------------------------------------------
-    def fit_transform(self, X: np.ndarray, subject_id: str) -> np.ndarray:
+    def fit_transform(self, X, subject_id):
         self.fit(X, subject_id)
         return self.transform(X, subject_id)
