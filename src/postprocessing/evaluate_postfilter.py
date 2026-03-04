@@ -20,15 +20,7 @@ from src.postprocessing.transition_mask import STATE2IDX
 from src.postprocessing.transition_mask import STATES
 from src.postprocessing.viterbi import ViterbiDecoder
 
-
 class ModelLoader:
-    """
-    Loads a checkpoint and rebuilds the exact model that was saved.
-    Supports lstm | cnn_lstm | cnn_lstm_deep.
-    Checkpoint filename: cnn_lstm_deep_<subject>.pth  (adjust below if needed)
-    """
-
-    # ── Map model_type → (class, default kwargs) ─────────────
     _DEFAULTS = {
         'lstm': dict(
             hidden_size=256, num_layers=2, dropout=0.2, bidirectional=False
@@ -51,12 +43,11 @@ class ModelLoader:
 
     def load(self, test_subject: str, input_size: int,
              num_classes: int) -> nn.Module:
-        ckpt_path = self.models_dir / f'cnn_lstm_deep_{test_subject}.pth'
-        if not ckpt_path.exists():
-            ckpt_path = self.models_dir / f'model_{self.model_type}_{test_subject}.pth'
-
-        print(f"  Loading: {ckpt_path.name}")
-        state = torch.load(ckpt_path, weights_only=False, map_location='cpu')
+        ckpt = self.models_dir / f'cnn_lstm_deep_{test_subject}.pth'
+        if not ckpt.exists():
+            ckpt = self.models_dir / f'model_{self.model_type}_{test_subject}.pth'
+        print(f"  Loading: {ckpt.name}")
+        state = torch.load(ckpt, weights_only=False, map_location='cpu')
         model = self._build(input_size, num_classes)
         model.load_state_dict(state['model_state_dict'])
         model.eval()
@@ -64,37 +55,34 @@ class ModelLoader:
 
     def _build(self, input_size: int, num_classes: int) -> nn.Module:
         kw = {**self._DEFAULTS[self.model_type], **self.overrides}
-
         if self.model_type == 'lstm':
             return LSTMClassifier(input_size, num_classes=num_classes, **kw)
-
         if self.model_type == 'cnn_lstm':
             return CNNLSTMClassifier(input_size, num_classes=num_classes, **kw)
-
         if self.model_type == 'cnn_lstm_deep':
             return CNNLSTMClassifierDeep(input_size, num_classes=num_classes, **kw)
-
         raise ValueError(f"Unknown model_type: {self.model_type}")
-
-
-print("✓ ModelLoader ready")
-
-
-# ── Cell 8 : Inferencer + DMinSweeper + PostFilterEvaluator ──
 
 class Inferencer:
     def __init__(self, batch_size: int = 64):
-        self.batch_size = batch_size
+        self.bs = batch_size
 
     def get_logits(self, model: nn.Module, X: np.ndarray) -> np.ndarray:
-        """(N, T, F) → (N*T, C) flat logits"""
+        """
+        Args:
+            X: (N, T, F)
+        Returns:
+            logits: (N*T, C) — flattened frame-wise logits
+        """
         chunks = []
         with torch.no_grad():
-            for i in range(0, len(X), self.batch_size):
-                batch = torch.FloatTensor(X[i:i + self.batch_size])
-                chunks.append(model(batch).numpy())
-        logits = np.concatenate(chunks, axis=0)
-        return logits.reshape(-1, logits.shape[-1])
+            for i in range(0, len(X), self.bs):
+                batch = torch.FloatTensor(X[i:i+self.bs])
+                chunks.append(model(batch).numpy())   # (b, T, C)
+        logits = np.concatenate(chunks, axis=0)       # (N, T, C)
+        return logits.reshape(-1, logits.shape[-1])   # (N*T, C)
+
+
 
 class PostFilterEvaluator:
     # ── 5 METHODS ────────────────────────────────────────────────────

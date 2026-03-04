@@ -1,3 +1,7 @@
+from src.data.preprocessing import IMUPreprocessor
+from src.data.windowing import WindowGenerator
+from src.models.factory import create_cnn_lstm_model
+from src.models.lstm_frame import LSTMClassifier
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -43,7 +47,7 @@ class LOSOTrainer:
         self.num_classes   = len(self.config['data']['classes'])
         self.hidden_size   = 256
         self.num_layers    = 2
-        self.dropout       = 0.2
+        self.dropout       = 0.3
         self.bidirectional = True
         self.learning_rate = 0.0005
         self.batch_size    = 32
@@ -77,7 +81,7 @@ class LOSOTrainer:
         self.log("=" * 70)
         self.log(f"Trainer: {variant_tag} | Device: {self.device}")
         self.log(f"Window: {self.window_size}s | Overlap: {self.overlap} | "
-                 f"LR: {self.learning_rate} | Epochs: {self.epochs}")
+                 f"LR: {self.learning_rate} | Epochfs: {self.epochs}")
         self.log("=" * 70)
 
     # ── Logging ─────────────────────────────────────────────────────────
@@ -270,6 +274,8 @@ class LOSOTrainer:
         self.log(f"{'='*70}")
 
         train_subjects = [s for s in all_subjects if s != test_subject]
+        val_subject    = train_subjects[-1]          # last subject as validation
+        train_subjects = train_subjects[:-1]         # remaining 8 for training
 
         # Load
         train_data = {}
@@ -286,6 +292,13 @@ class LOSOTrainer:
         # Window
         windower = WindowGenerator(window_size=self.window_size, overlap=self.overlap)
 
+        # ── load val subject raw data ──
+        X_val_raw, y_val_raw, _ = self.load_subject_data(val_subject)
+        
+        # ── fit preprocessor on train subjects only (exclude val too) ──
+        X_train_all  = np.vstack([train_data[s]['X'] for s in train_subjects])
+        preprocessor.fit(X_train_all, subject_id='global_train')
+        
         X_train_list, y_train_list = [], []
         for subj in train_subjects:
             X_norm       = preprocessor.transform(train_data[subj]['X'], 'global_train')
@@ -294,22 +307,32 @@ class LOSOTrainer:
             )
             X_train_list.append(X_win)
             y_train_list.append(y_win)
-
+        
         X_train = np.concatenate(X_train_list)
         y_train = np.concatenate(y_train_list)
+        
+        # ── validation set (held-out train subject, never the test subject) ──
+        X_val_norm     = preprocessor.transform(X_val_raw, 'global_train')
+        X_val, y_val   = windower.create_windows_sequence_labeling(X_val_norm, y_val_raw)
+        
+        # ── true test set (only touched for final evaluation) ──
+        X_test_norm    = preprocessor.transform(X_test_raw, 'global_train')
+        X_test, y_test = windower.create_windows_sequence_labeling(X_test_norm, y_test_raw)
 
-        X_test_norm      = preprocessor.transform(X_test_raw, 'global_train')
-        X_test, y_test   = windower.create_windows_sequence_labeling(
-            X_test_norm, y_test_raw
-        )
-
-        self.log(f"Train: {X_train.shape} | Test: {X_test.shape}")
+        self.log(f"Train subjects: {train_subjects} | Val: {val_subject} | Test: {test_subject}")
+        self.log(f"Train: {X_train.shape} | Val: {X_val.shape} | Test: {X_test.shape}")
 
         # DataLoaders
         train_loader = DataLoader(
             TensorDataset(torch.FloatTensor(X_train), torch.LongTensor(y_train)),
             batch_size=self.batch_size, shuffle=True, drop_last=True
         )
+
+        val_loader = DataLoader(
+            TensorDataset(torch.FloatTensor(X_val), torch.LongTensor(y_val)),
+            batch_size=self.batch_size, shuffle=False
+        )
+
         test_loader = DataLoader(
             TensorDataset(torch.FloatTensor(X_test), torch.LongTensor(y_test)),
             batch_size=self.batch_size, shuffle=False
@@ -337,7 +360,7 @@ class LOSOTrainer:
 
         for epoch in range(self.epochs):
             train_loss         = self.train_epoch(model, train_loader, criterion, optimizer)
-            val_acc, val_f1, _, _ = self.evaluate(model, test_loader)
+            val_acc, val_f1, _, _ = self.evaluate(model, val_loader)    
 
             history['train_loss'].append(train_loss)
             history['val_acc'].append(val_acc)
